@@ -14,8 +14,8 @@ import (
 	"time"
 )
 
-// TimingData holds the duration of various phases of the request lifecycle
-type TimingData struct {
+// Metrics holds the duration of various phases of the request lifecycle
+type Metrics struct {
 	DNSDuration     time.Duration
 	ConnectDuration time.Duration
 	TLSDuration     time.Duration
@@ -24,7 +24,7 @@ type TimingData struct {
 }
 
 // newClientTrace creates a new httptrace.ClientTrace to track request timings
-func newClientTrace(timings *TimingData, start time.Time) *httptrace.ClientTrace {
+func newClientTrace(timings *Metrics, start time.Time) *httptrace.ClientTrace {
 	var dnsStart, connectStart, tlsStart time.Time
 
 	return &httptrace.ClientTrace{
@@ -53,17 +53,17 @@ func newClientTrace(timings *TimingData, start time.Time) *httptrace.ClientTrace
 }
 
 // TraceRequest sends an HTTP GET request and traces the request lifecycle
-func TraceRequest(targetURL string) (TimingData, error) {
+func TraceRequest(targetURL string) (Metrics, error) {
 	req, err := http.NewRequest("GET", targetURL, nil)
 	if err != nil {
-		return TimingData{}, fmt.Errorf("failed to create request: %w", err)
+		return Metrics{}, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Making sure the request won't be cached
 	req.Header.Set("Expires", "0")
 
 	start := time.Now()
-	timings := &TimingData{}
+	timings := &Metrics{}
 
 	// Attach the trace to the request's context
 	req = req.WithContext(httptrace.WithClientTrace(context.Background(), newClientTrace(timings, start)))
@@ -72,7 +72,7 @@ func TraceRequest(targetURL string) (TimingData, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return TimingData{}, fmt.Errorf("request failed: %w", err)
+		return Metrics{}, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
