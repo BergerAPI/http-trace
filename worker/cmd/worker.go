@@ -5,10 +5,12 @@ import (
 	"crypto/tls"
 	"fmt"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"log"
 	"net/http"
 	"net/http/httptrace"
-	"sync"
+	"os"
+	"os/signal"
 	"time"
 )
 
@@ -51,11 +53,14 @@ func newClientTrace(timings *TimingData, start time.Time) *httptrace.ClientTrace
 }
 
 // TraceRequest sends an HTTP GET request and traces the request lifecycle
-func TraceRequest(targetURL string) (*TimingData, error) {
+func TraceRequest(targetURL string) (TimingData, error) {
 	req, err := http.NewRequest("GET", targetURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return TimingData{}, fmt.Errorf("failed to create request: %w", err)
 	}
+
+	// Making sure the request won't be cached
+	req.Header.Set("Expires", "0")
 
 	start := time.Now()
 	timings := &TimingData{}
@@ -67,32 +72,70 @@ func TraceRequest(targetURL string) (*TimingData, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return TimingData{}, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Calculate total duration after receiving the response
 	timings.TotalDuration = time.Since(start)
 
-	return timings, nil
+	return *timings, nil
 }
 
 func main() {
-	nc, _ := nats.Connect(nats.DefaultURL)
+	region := os.Args[1]
+	consumerName := fmt.Sprintf("worker_%s", region)
 
-	// Use a WaitGroup to wait for a message to arrive
-	wg := sync.WaitGroup{}
-	wg.Add(1)
+	// Connecting to the NATS-Server
+	nc, err := nats.Connect(nats.DefaultURL)
 
-	// Subscribe
-	if _, err := nc.Subscribe("updates", func(m *nats.Msg) {
-		res, _ := TraceRequest(string(m.Data))
-		println(res.DNSDuration.String())
-	}); err != nil {
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer nc.Close()
+
+	// Configuring jetstream
+	js, err := jetstream.New(nc)
+
+	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Wait for a message to come in
-	wg.Wait()
+	// Creating a consumer for all subjects
+	ctx := context.Background()
+	consumer, err := js.CreateOrUpdateConsumer(ctx, "jobs", jetstream.ConsumerConfig{
+		Name:          consumerName,
+		Durable:       consumerName,
+		Description:   fmt.Sprintf("Worker for Tracing-Jobs in %s", region),
+		FilterSubject: fmt.Sprintf("jobs.%s.*", "eu"),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
+	println("Registering the consumer.")
+
+	// Subscribing to all messages
+	c, err := consumer.Consume(func(msg jetstream.Msg) {
+		target := string(msg.Data())
+		res, err := TraceRequest(target)
+
+		if err != nil {
+			fmt.Printf("Message to %s failed\n", target)
+			_ = msg.Nak()
+		}
+
+		println(res.TotalDuration.String())
+
+		_ = msg.Ack()
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer c.Stop()
+
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt)
+	<-quit
 }
