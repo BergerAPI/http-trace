@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/nats-io/nats.go"
 	"log"
 	"net/url"
+	"slices"
 )
 
 func main() {
@@ -17,6 +19,18 @@ func main() {
 		log.Fatal(err)
 	}
 	defer nc.Close()
+
+	// Create a JetStream context
+	js, err := nc.JetStream()
+	if err != nil {
+		log.Fatalf("Error creating JetStream context: %v", err)
+	}
+
+	// Fetch stream information to list all available subjects
+	streamInfo, err := js.StreamInfo("jobs")
+	if err != nil {
+		log.Fatalf("Error fetching stream info: %v", err)
+	}
 
 	app.Get("/health", func(ctx *fiber.Ctx) error {
 		return ctx.SendString("OK")
@@ -38,7 +52,21 @@ func main() {
 			return ctx.Status(401).SendString("Target is missing or invalid. Refer to the official documentation.")
 		}
 
-		if err := nc.Publish("jobs.eu.trace", []byte(targetUrl.String())); err != nil {
+		region := payload.Region
+
+		// Making sure that at least some region is provided
+		if region == "" {
+			region = "eu"
+		}
+
+		subject := fmt.Sprintf("jobs.%s.*", region)
+
+		// Make sure a subjects with the provided region is available
+		if !slices.Contains(streamInfo.Config.Subjects, subject) {
+			return ctx.Status(401).SendString("Region is not available.")
+		}
+
+		if err := nc.Publish(subject, []byte(targetUrl.String())); err != nil {
 			return err
 		}
 
