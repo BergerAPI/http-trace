@@ -107,7 +107,7 @@ func main() {
 		Name:          consumerName,
 		Durable:       consumerName,
 		Description:   fmt.Sprintf("Worker for Tracing-Jobs in %s", region),
-		FilterSubject: fmt.Sprintf("jobs.%s.*", "eu"),
+		FilterSubject: fmt.Sprintf("jobs.%s.*", region),
 	})
 	if err != nil {
 		log.Fatal(err)
