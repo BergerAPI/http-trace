@@ -2,7 +2,8 @@
   "name": "jobs",
   "subjects": [
     "jobs.eu.*",
-    "jobs.us.*"
+    "jobs.us.*",
+    "jobs.results"
   ],
   "retention": "workqueue",
   "max_consumers": -1,

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -16,11 +17,11 @@ import (
 
 // Metrics holds the duration of various phases of the request lifecycle
 type Metrics struct {
-	DNSDuration     time.Duration
-	ConnectDuration time.Duration
-	TLSDuration     time.Duration
-	TimeToFirstByte time.Duration
-	TotalDuration   time.Duration
+	DNSDuration     time.Duration `json:"dns_duration"`
+	ConnectDuration time.Duration `json:"con_duration"`
+	TLSDuration     time.Duration `json:"tls_duration"`
+	TimeToFirstByte time.Duration `json:"tt_first_byte"`
+	TotalDuration   time.Duration `json:"total_duration"`
 }
 
 // newClientTrace creates a new httptrace.ClientTrace to track request timings
@@ -113,19 +114,26 @@ func main() {
 		log.Fatal(err)
 	}
 
-	println("Registering the consumer.")
-
 	// Subscribing to all messages
 	c, err := consumer.Consume(func(msg jetstream.Msg) {
 		target := string(msg.Data())
-		res, err := TraceRequest(target)
+		metrics, err := TraceRequest(target)
 
 		if err != nil {
 			fmt.Printf("Message to %s failed\n", target)
 			_ = msg.Nak()
 		}
 
-		println(res.TotalDuration.String())
+		j, err := json.Marshal(metrics)
+		if err != nil {
+			fmt.Printf("Message to %s failed to marshal\n", target)
+			_ = msg.Nak()
+		}
+
+		if err := nc.Publish("jobs.results", j); err != nil {
+			fmt.Printf("Message to %s failed to publish result\n", target)
+			_ = msg.Nak()
+		}
 
 		_ = msg.Ack()
 	})
@@ -133,6 +141,8 @@ func main() {
 		log.Fatal(err)
 	}
 	defer c.Stop()
+
+	println("Worker-Node is ready.")
 
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)

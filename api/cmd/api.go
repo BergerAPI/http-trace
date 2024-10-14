@@ -26,6 +26,13 @@ func main() {
 		log.Fatalf("Error creating JetStream context: %v", err)
 	}
 
+	if _, err := js.Subscribe("jobs.results", func(msg *nats.Msg) {
+		println(string(msg.Data))
+		_ = msg.Ack()
+	}, nats.Durable("API_RESULTS")); err != nil {
+		log.Fatal(err)
+	}
+
 	// Fetch stream information to list all available subjects
 	streamInfo, err := js.StreamInfo("jobs")
 	if err != nil {
